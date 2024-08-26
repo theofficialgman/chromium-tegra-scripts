@@ -1,0 +1,352 @@
+From bfbb50ffc0f88fb0e4f8aea72613f0773a588a43 Mon Sep 17 00:00:00 2001
+Date: Wed, 26 Jun 2024 18:13:03 -0400
+Subject: [PATCH] nvv4l2: Change linking from static to dynamic
+
+---
+ configure               |  1 -
+ libavcodec/nvv4l2.c     | 37 +++++++++++++++++++++++++++++++------
+ libavcodec/nvv4l2.h     | 21 +++++++++++++++++++++
+ libavcodec/nvv4l2_dec.c | 36 +++++++++++++++++++++++-------------
+ libavcodec/nvv4l2_enc.c | 16 +++++++++++++---
+ 5 files changed, 88 insertions(+), 23 deletions(-)
+
+diff --git a/configure b/configure
+index 6b30120245..9163151670 100755
+--- a/configure
++++ b/configure
+@@ -3280,7 +3280,6 @@ qsvvpp_select="qsv"
+ vaapi_encode_deps="vaapi"
+ v4l2_m2m_deps="linux_videodev2_h sem_timedwait"
+ nvv4l2_deps="libv4l2 pthreads linux_videodev2_h"
+-nvv4l2_extralibs="-lnvbuf_utils"
+ 
+ bilateral_cuda_filter_deps="ffnvcodec"
+ bilateral_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
+diff --git a/libavcodec/nvv4l2.c b/libavcodec/nvv4l2.c
+index 44a825c8c2..cb4ca3a40c 100644
+--- a/libavcodec/nvv4l2.c
++++ b/libavcodec/nvv4l2.c
+@@ -135,7 +135,7 @@ nvv4l2_map_out(nvv4l2_ctx_t *ctx, struct v4l2_buffer *v4l2_buf,
+ 
+     switch (mem_type) {
+     case V4L2_MEMORY_DMABUF:
+-        ret = NvBufferGetParams(dma_fd, &params);
++        ret = ctx->ops.NvBufferGetParams(dma_fd, &params);
+         if(ret) {
+             av_log(ctx->avctx, AV_LOG_ERROR, "GetParams failed!\n");
+             pthread_mutex_unlock(&ctx->queue_lock);
+@@ -145,7 +145,7 @@ nvv4l2_map_out(nvv4l2_ctx_t *ctx, struct v4l2_buffer *v4l2_buf,
+             buffer->planes[i].fd = dma_fd;
+             v4l2_buf->m.planes[i].m.fd = dma_fd;
+             buffer->planes[i].mem_offset = params.offset[i];
+-            ret = NvBufferMemMap(dma_fd, i, NvBufferMem_Read_Write,
++            ret = ctx->ops.NvBufferMemMap(dma_fd, i, NvBufferMem_Read_Write,
+                                  (void **)&data);
+             if (ret) {
+                 ctx->in_error = true;
+@@ -182,7 +182,7 @@ nvv4l2_unmap_out(nvv4l2_ctx_t *ctx, int index, enum v4l2_buf_type buf_type,
+     switch (mem_type) {
+     case V4L2_MEMORY_DMABUF:
+         for (uint32_t i = 0; i < buffer->n_planes; i++) {
+-            ret = NvBufferMemUnMap(dma_fd, i, (void **)&buffer->planes[i].data);
++            ret = ctx->ops.NvBufferMemUnMap(dma_fd, i, (void **)&buffer->planes[i].data);
+             if (ret) {
+                 ctx->in_error = true;
+                 av_log(ctx->avctx, AV_LOG_ERROR,
+@@ -837,7 +837,7 @@ nvv4l2_get_pixfmt_list_version(nvv4l2_ctx_t *ctx)
+     iParams.colorFormat = NvBufferColorFormat_NV12;
+ 
+     /* Create assumed NV12 buffer */
+-    ret = NvBufferCreateEx(&dma_fd, &iParams);
++    ret = ctx->ops.NvBufferCreateEx(&dma_fd, &iParams);
+     if (ret || dma_fd == -1) {
+         av_log(ctx->avctx, AV_LOG_ERROR,
+                "Error getting NvBuffer Pixel Format list version!\n");
+@@ -845,7 +845,7 @@ nvv4l2_get_pixfmt_list_version(nvv4l2_ctx_t *ctx)
+     }
+ 
+     /* Query created buffer parameters */
+-    ret = NvBufferGetParams(dma_fd, &params);
++    ret = ctx->ops.NvBufferGetParams(dma_fd, &params);
+     if (ret) {
+         av_log(ctx->avctx, AV_LOG_ERROR,
+                "Error getting NvBuffer Pixel Format list version!\n");
+@@ -861,7 +861,32 @@ nvv4l2_get_pixfmt_list_version(nvv4l2_ctx_t *ctx)
+         version = NvBufferPixFmtVersion_New;
+     }
+ 
+-    NvBufferDestroy(dma_fd);
++    ctx->ops.NvBufferDestroy(dma_fd);
+ 
+     return version;
+ }
++
++#define LOAD_NV_FUNCTION(ctx, sym) \
++    ctx->ops.sym = (void *)dlsym(ctx->nvbuf_handle, #sym); \
++    if (!ctx->ops.sym) return AVERROR(EINVAL);
++
++int nvv4l2_load_nvbuf_utils(nvv4l2_ctx_t *ctx)
++{
++    ctx->nvbuf_handle = dlopen("libnvbuf_utils.so.1.0.0", RTLD_NOW | RTLD_GLOBAL);
++    if (!ctx->nvbuf_handle)
++        return AVERROR_UNKNOWN;
++
++    LOAD_NV_FUNCTION(ctx, Raw2NvBuffer);
++    LOAD_NV_FUNCTION(ctx, NvBufferMemUnMap);
++    LOAD_NV_FUNCTION(ctx, NvBufferMemMap);
++    LOAD_NV_FUNCTION(ctx, NvBufferGetParams);
++    LOAD_NV_FUNCTION(ctx, NvBufferSessionDestroy);
++    LOAD_NV_FUNCTION(ctx, NvBufferDestroy);
++    LOAD_NV_FUNCTION(ctx, NvBufferSessionCreate);
++    LOAD_NV_FUNCTION(ctx, NvBufferTransform);
++    LOAD_NV_FUNCTION(ctx, NvBuffer2Raw);
++    LOAD_NV_FUNCTION(ctx, NvBufferCreate);
++    LOAD_NV_FUNCTION(ctx, NvBufferCreateEx);
++
++    return 0;
++}
+diff --git a/libavcodec/nvv4l2.h b/libavcodec/nvv4l2.h
+index 11353bf63f..5f09e380f4 100644
+--- a/libavcodec/nvv4l2.h
++++ b/libavcodec/nvv4l2.h
+@@ -29,6 +29,7 @@
+ #include <stdlib.h>
+ #include <stdint.h>
+ #include <stdbool.h>
++#include <dlfcn.h>
+ #include <libv4l2.h>
+ #include <linux/videodev2.h>
+ #include "avcodec.h"
+@@ -153,6 +154,20 @@ typedef struct {
+     uint32_t ratecontrol;
+ } NvEncoder;
+ 
++typedef struct {
++    int (*Raw2NvBuffer)(unsigned char *, unsigned int, unsigned int, unsigned int, int);
++    int (*NvBufferMemUnMap)(int, unsigned int, void **);
++    int (*NvBufferMemMap)(int, unsigned int, NvBufferMemFlags, void **);
++    int (*NvBufferGetParams)(int, NvBufferParams *);
++    void (*NvBufferSessionDestroy)(NvBufferSession);
++    int (*NvBufferDestroy)(int);
++    NvBufferSession (*NvBufferSessionCreate)(void);
++    int (*NvBufferTransform)(int, int, NvBufferTransformParams *);
++    int (*NvBuffer2Raw)(int, unsigned int, unsigned int, unsigned int, unsigned char *);
++    int (*NvBufferCreate)(int *, int, int, NvBufferLayout, NvBufferColorFormat);
++    int (*NvBufferCreateEx)(int *, NvBufferCreateParams *);
++} nvv4l2_op_t;
++
+ /**
+  * @brief Struct defining the decoder context.
+  * The video decoder device node is `/dev/nvhost-nvdec`. The category name
+@@ -219,6 +234,9 @@ typedef struct {
+ 
+     NvEncoder *enc;
+     AVCodecContext *avctx;
++
++    nvv4l2_op_t ops;
++    void *nvbuf_handle;
+ } nvv4l2_ctx_t;
+ 
+ /* NVV4L2 common functions */
+@@ -336,4 +354,7 @@ nvv4l2_encoder_get_packet(AVCodecContext *avctx,
+ int
+ nvv4l2_encoder_close(AVCodecContext *avctx, nvv4l2_ctx_t *ctx);
+ 
++int
++nvv4l2_load_nvbuf_utils(nvv4l2_ctx_t *ctx);
++
+ #endif
+diff --git a/libavcodec/nvv4l2_dec.c b/libavcodec/nvv4l2_dec.c
+index 70ae2eab42..483439e276 100644
+--- a/libavcodec/nvv4l2_dec.c
++++ b/libavcodec/nvv4l2_dec.c
+@@ -192,7 +192,7 @@ static void query_set_capture(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+     /* Destroy all allocated transform/export DMA buffers. */
+     for (uint32_t i = 0; i < NV_MAX_BUFFERS; i++) {
+         if (ctx->plane_dma_fd[i] != -1) {
+-            ret = NvBufferDestroy(ctx->plane_dma_fd[i]);
++            ret = ctx->ops.NvBufferDestroy(ctx->plane_dma_fd[i]);
+             if (ret < 0) {
+                 av_log(avctx, AV_LOG_ERROR,
+                        "Failed to destroy plane buffer!\n");
+@@ -232,7 +232,7 @@ static void query_set_capture(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+     }
+ 
+     for (uint32_t i = 0; i < NV_MAX_BUFFERS; i++) {
+-        ret = NvBufferCreateEx(&ctx->plane_dma_fd[i], &input_params);
++        ret = ctx->ops.NvBufferCreateEx(&ctx->plane_dma_fd[i], &input_params);
+         if (ret) {
+             av_log(avctx, AV_LOG_ERROR, "Creation of dmabuf failed!\n");
+             ctx->in_error = true;
+@@ -264,7 +264,7 @@ static void query_set_capture(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+     /* Destroy previous DMA buffers. */
+     for (uint32_t i = 0; i < cp_num_old_buffers; i++) {
+         if (ctx->dmabuff_fd[i] != -1) {
+-            ret = NvBufferDestroy(ctx->dmabuff_fd[i]);
++            ret = ctx->ops.NvBufferDestroy(ctx->dmabuff_fd[i]);
+             if (ret) {
+                 av_log(avctx, AV_LOG_ERROR,
+                        "Failed to Destroy NvBuffer!\n");
+@@ -359,7 +359,7 @@ static void query_set_capture(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+     cap_params.nvbuf_tag = NvBufferTag_VIDEO_DEC;
+ 
+     for (uint32_t i = 0; i < ctx->cp_num_buffers; i++) {
+-        ret = NvBufferCreateEx(&ctx->dmabuff_fd[i], &cap_params);
++        ret = ctx->ops.NvBufferCreateEx(&ctx->dmabuff_fd[i], &cap_params);
+         if (ret) {
+             av_log(avctx, AV_LOG_ERROR, "Failed to create buffers!\n");
+             ctx->in_error = true;
+@@ -536,7 +536,7 @@ static void *dec_capture_thread(void *arg)
+              ** to dump the raw decoded buffer data.
+              */
+             if (buf_index >= 0) {
+-                ret = NvBufferTransform(ctx->dmabuff_fd[v4l2_cp_buf.index],
++                ret = ctx->ops.NvBufferTransform(ctx->dmabuff_fd[v4l2_cp_buf.index],
+                                         ctx->plane_dma_fd[buf_index],
+                                         &transform_params);
+                 if (ret == -1) {
+@@ -546,7 +546,7 @@ static void *dec_capture_thread(void *arg)
+                     break;
+                 }
+ 
+-                ret = NvBufferGetParams(ctx->plane_dma_fd[buf_index],
++                ret = ctx->ops.NvBufferGetParams(ctx->plane_dma_fd[buf_index],
+                                         &buf_params);
+                 if (ret) {
+                     ctx->in_error = true;
+@@ -771,6 +771,11 @@ nvv4l2_ctx_t *nvv4l2_create_decoder(AVCodecContext *avctx,
+         return ctx;
+     }
+ 
++    if (nvv4l2_load_nvbuf_utils(ctx) < 0) {
++        av_log(avctx, AV_LOG_ERROR, "Failed to load nvbuf_utils!\n");
++        return AVERROR_UNKNOWN;
++    }
++
+     /* Initialization. */
+     ctx->cp_pixfmt = pix_fmt;
+     ctx->op_pixfmt = nvv4l2_map_nvcodec_type(nv_codec_type);
+@@ -779,7 +784,7 @@ nvv4l2_ctx_t *nvv4l2_create_decoder(AVCodecContext *avctx,
+     ctx->pixfmt_list_ver = nvv4l2_get_pixfmt_list_version(ctx);
+ 
+     /* Get a NvBuffer session for interprocess transforms */
+-    ctx->buf_session = NvBufferSessionCreate();
++    ctx->buf_session = ctx->ops.NvBufferSessionCreate();
+ 
+     /* Decoder code assumes that the following do not change.
+      ** If another memory type is wanted, relevant changes should be done
+@@ -915,7 +920,7 @@ int nvv4l2_decoder_close(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+         /* All allocated DMA buffers must be destroyed. */
+         for (uint32_t i = 0; i < cp_num_old_buffers; i++) {
+             if (ctx->dmabuff_fd[i] != -1) {
+-                ret = NvBufferDestroy(ctx->dmabuff_fd[i]);
++                ret = ctx->ops.NvBufferDestroy(ctx->dmabuff_fd[i]);
+                 if (ret < 0) {
+                     av_log(avctx, AV_LOG_ERROR,
+                            "Failed to destroy dma buffer!\n");
+@@ -927,7 +932,7 @@ int nvv4l2_decoder_close(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+         /* Destroy all allocated transform/export DMA buffers. */
+         for (uint32_t i = 0; i < NV_MAX_BUFFERS; i++) {
+             if (ctx->plane_dma_fd[i] != -1) {
+-                ret = NvBufferDestroy(ctx->plane_dma_fd[i]);
++                ret = ctx->ops.NvBufferDestroy(ctx->plane_dma_fd[i]);
+                 if (ret < 0) {
+                     av_log(avctx, AV_LOG_ERROR,
+                            "Failed to destroy plane buffer!\n");
+@@ -938,7 +943,7 @@ int nvv4l2_decoder_close(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+ 
+         /* Destroy NvBuffer session. */
+         if (ctx->buf_session)
+-            NvBufferSessionDestroy(ctx->buf_session);
++            ctx->ops.NvBufferSessionDestroy(ctx->buf_session);
+ 
+         NVFREE(ctx->export_pool);
+ 
+@@ -962,6 +967,11 @@ int nvv4l2_decoder_close(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+         av_log(avctx, AV_LOG_VERBOSE, "Decoder Run was successful\n");
+     }
+ 
++    if (!ctx->nvbuf_handle) {
++        dlclose(ctx->nvbuf_handle);
++        ctx->nvbuf_handle = NULL;
++    }
++
+     NVFREE(ctx);
+ 
+     return ret;
+@@ -1219,14 +1229,14 @@ nvv4l2dec_decode(AVCodecContext *avctx, struct AVFrame *frame,
+ 
+     /* Export decoded frame data. */
+     if (buf_index >= 0 && frame->data[0]) {
+-        NvBuffer2Raw(ctx->plane_dma_fd[buf_index], 0,
++        ctx->ops.NvBuffer2Raw(ctx->plane_dma_fd[buf_index], 0,
+                      ctx->plane_width[0], ctx->plane_height[0],
+                      frame->data[0]);
+-        NvBuffer2Raw(ctx->plane_dma_fd[buf_index], 1,
++        ctx->ops.NvBuffer2Raw(ctx->plane_dma_fd[buf_index], 1,
+                      ctx->plane_width[1], ctx->plane_height[1],
+                      frame->data[1]);
+         if (ctx->cp_pixfmt == V4L2_PIX_FMT_YUV420M) {
+-            NvBuffer2Raw(ctx->plane_dma_fd[buf_index], 2,
++            ctx->ops.NvBuffer2Raw(ctx->plane_dma_fd[buf_index], 2,
+                          ctx->plane_width[2], ctx->plane_height[2],
+                          frame->data[2]);
+         }
+diff --git a/libavcodec/nvv4l2_enc.c b/libavcodec/nvv4l2_enc.c
+index b979c93051..5725976fe8 100644
+--- a/libavcodec/nvv4l2_enc.c
++++ b/libavcodec/nvv4l2_enc.c
+@@ -272,6 +272,11 @@ nvv4l2_ctx_t *nvv4l2_create_encoder(AVCodecContext *avctx,
+         return ctx;
+     }
+ 
++    if (nvv4l2_load_nvbuf_utils(ctx) < 0) {
++        av_log(avctx, AV_LOG_ERROR, "Failed to load nvbuf_utils!\n");
++        return AVERROR_BUG;
++    }
++
+     /* Initialization. */
+     ctx->codec_width = encoder->width;
+     ctx->codec_height = encoder->height;
+@@ -560,7 +565,7 @@ nvv4l2_ctx_t *nvv4l2_create_encoder(AVCodecContext *avctx,
+             iParams.colorFormat++;
+         }
+ 
+-        ret = NvBufferCreateEx(&ctx->plane_dma_fd[i], &iParams);
++        ret = ctx->ops.NvBufferCreateEx(&ctx->plane_dma_fd[i], &iParams);
+         if (ret) {
+             av_log(avctx, AV_LOG_ERROR, "Creation of dmabuf failed!\n");
+             ctx->in_error = true;
+@@ -721,7 +726,7 @@ int nvv4l2_encoder_put_frame(AVCodecContext *avctx, nvv4l2_ctx_t *ctx,
+         av_log(avctx, AV_LOG_VERBOSE, "Plane %d: width %d -> %d\n",
+                i, ctx->op_planefmts[i].width, aligned_plane_width);
+ 
+-        Raw2NvBuffer(frame->payload[i], i, aligned_plane_width,
++        ctx->ops.Raw2NvBuffer(frame->payload[i], i, aligned_plane_width,
+                      ctx->op_planefmts[i].height, buffer->planes[i].fd);
+         buffer->planes[i].bytesused = ctx->op_planefmts[i].width *
+                                       ctx->op_planefmts[i].height *
+@@ -816,7 +821,7 @@ int nvv4l2_encoder_close(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+         /* Unmap and destroy all allocated DMA buffers. */
+         for (uint32_t i = 0; i < op_num_old_buffers; i++) {
+             if (ctx->plane_dma_fd[i] != -1) {
+-                ret = NvBufferDestroy(ctx->plane_dma_fd[i]);
++                ret = ctx->ops.NvBufferDestroy(ctx->plane_dma_fd[i]);
+                 ctx->plane_dma_fd[i] = -1;
+                 if (ret) {
+                     av_log(avctx, AV_LOG_ERROR,
+@@ -852,6 +857,11 @@ int nvv4l2_encoder_close(AVCodecContext *avctx, nvv4l2_ctx_t *ctx)
+         av_log(avctx, AV_LOG_VERBOSE, "Encoder Run is successful\n");
+     }
+ 
++    if (!ctx->nvbuf_handle) {
++        dlclose(ctx->nvbuf_handle);
++        ctx->nvbuf_handle = NULL;
++    }
++
+     NVFREE(ctx);
+ 
+     return ret;
+-- 
+2.43.0
+

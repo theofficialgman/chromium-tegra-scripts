@@ -1,0 +1,5 @@
+# Default settings for chromium-browser-stable. This file is sourced by /bin/sh from
+# /opt/chromium.org/chromium/chromium-browser
+
+# Options to pass to chromium-browser-stable
+CHROMIUM_FLAGS="--no-sandbox --force-renderer-accessibility"

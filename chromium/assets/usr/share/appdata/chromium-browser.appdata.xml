@@ -1,0 +1,53 @@
+<!-- Copyright 2017 The Chromium Authors -->
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>chromium-browser</id>
+  <update_contact>dofficialgman@gmail.com</update_contact>
+  <launchable type="desktop-id">chromium-browser.desktop</launchable>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>BSD-3-Clause and LGPL-2.1+ and Apache-2.0 and IJG and MIT and GPL-2.0+ and ISC and OpenSSL and (MPL-1.1 or GPL-2.0 or LGPL-2.0)</project_license>
+  <name>Chromium Browser for Nintendo Switch and L4T</name>
+  <summary>The Fastest and Most Feature Rich Browser for L4T</summary>
+  <description>
+    <p>
+    Chromium is an open-source browser project that aims to build a safer, faster,
+    and more stable way to experience the web.
+    </p>
+    <p>
+    Includes hardware accelerated video decoding of H.264, VP8, and VP9. Vulkan backend for rendering and WebGL.
+    </p>
+    <p>
+    ChromeOS Widevine DRM included for services such as Spotify, Netflix,
+    and Disney+. For some websites you may need to use the "Chromium Streaming" icon.
+    </p>
+    <p>
+    Includes support for Chrome Sync.
+    </p>
+  </description>
+  <url type="homepage">https://www.chromium.org/Home</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://gitlab.com/switchroot/infra/wiki/-/raw/main/.gitbook/assets/search.png</image>
+      <caption/>
+    </screenshot>
+    <screenshot>
+      <image>https://gitlab.com/switchroot/infra/wiki/-/raw/main/.gitbook/assets/chrome-sync.png</image>
+      <caption/>
+    </screenshot>
+    <screenshot>
+      <image>https://gitlab.com/switchroot/infra/wiki/-/raw/main/.gitbook/assets/wiki.png</image>
+      <caption/>
+    </screenshot>
+  </screenshots>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </recommends>
+  <provides>
+    <binary>chromium-browser</binary>
+  </provides>
+  <translation/>
+  <developer_name>Switchroot - The Chromium Authors</developer_name>
+  <url type="help">https://wiki.switchroot.org/wiki/</url>
+</component>

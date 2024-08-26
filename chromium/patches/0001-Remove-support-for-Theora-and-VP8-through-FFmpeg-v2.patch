@@ -1,0 +1,335 @@
+From fc0fff85acd3ce2797b353bcc81a0596682f9590 Mon Sep 17 00:00:00 2001
+From: Dale Curtis <dalecurtis@chromium.org>
+Date: Thu, 22 Feb 2024 20:51:45 +0000
+Subject: [PATCH] Remove support for Theora and VP8 through FFmpeg.
+
+These have been disabled for some time now, so clean up the
+feature flags and roll deps to remove compile time support
+from ffmpeg.
+
+https://chromium.googlesource.com/chromium/third_party/ffmpeg.git/+log/7c1b0b524c63..79a88d339360
+
+$ git log 7c1b0b524..79a88d339 --date=short --no-merges --format='%ad %ae %s'
+2024-02-22 dalecurtis Remove Theora, VP8 support from ffmpeg build.
+2024-02-21 dalecurtis git cl format all our custom things in third_party/ffmpeg
+
+Created with:
+  roll-dep src/third_party/ffmpeg
+
+Fixed: 40095941, 40074010
+Change-Id: I3c888f628deed70b5dfa568ba1ad4f0bc6651bb1
+Reviewed-on: https://chromium-review.googlesource.com/c/chromium/src/+/5318926
+Reviewed-by: Eugene Zemtsov <eugene@chromium.org>
+Reviewed-by: Derek Schuff <dschuff@chromium.org>
+Commit-Queue: Dale Curtis <dalecurtis@chromium.org>
+Cr-Commit-Position: refs/heads/main@{#1264188}
+---
+ DEPS                                          |  2 +-
+ content/browser/media/media_browsertest.cc    | 19 -------
+ .../media/media_canplaytype_browsertest.cc    |  8 ---
+ .../browser/media/media_color_browsertest.cc  | 26 ----------
+ content/renderer/pepper/video_decoder_shim.cc |  7 +--
+ media/base/media_switches.cc                  | 14 +----
+ media/base/media_switches.h                   |  7 +--
+ media/base/mime_util_internal.cc              |  6 ---
+ media/base/mime_util_unittest.cc              | 18 +------
+ media/base/supported_types.cc                 | 17 +++---
+ media/base/supported_types_unittest.cc        | 24 ++-------
+ media/filters/ffmpeg_demuxer_unittest.cc      | 52 +------------------
+ media/filters/ffmpeg_glue.cc                  |  6 ---
+ media/filters/ffmpeg_video_decoder.cc         |  8 ---
+ .../test/video_encoder/bitstream_validator.cc |  1 -
+ .../video_encoder_test_environment.cc         |  1 -
+ media/test/pipeline_integration_test.cc       |  9 ----
+ third_party/ffmpeg                            |  2 +-
+ 18 files changed, 18 insertions(+), 209 deletions(-)
+
+diff --git a/content/browser/media/media_browsertest.cc b/content/browser/media/media_browsertest.cc
+index d69b1150d0fd1..bf3cd66a70907 100644
+--- a/content/browser/media/media_browsertest.cc
++++ b/content/browser/media/media_browsertest.cc
+@@ -212,25 +212,6 @@ class MediaTest : public testing::WithParamInterface<bool>,
+   }
+ };
+ 
+-// Android doesn't support Theora.
+-#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearTheora) {
+-  if (base::FeatureList::IsEnabled(media::kTheoraVideoCodec)) {
+-    PlayVideo("bear.ogv");
+-  } else {
+-    GTEST_SKIP() << "Theora isn't supported";
+-  }
+-}
+-
+-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearSilentTheora) {
+-  if (base::FeatureList::IsEnabled(media::kTheoraVideoCodec)) {
+-    PlayVideo("bear_silent.ogv");
+-  } else {
+-    GTEST_SKIP() << "Theora isn't supported";
+-  }
+-}
+-#endif  // !BUILDFLAG(IS_ANDROID)
+-
+ IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWebm) {
+   PlayVideo("bear.webm");
+ }
+diff --git a/content/browser/media/media_canplaytype_browsertest.cc b/content/browser/media/media_canplaytype_browsertest.cc
+index 105429a75b213..670d173ec6bce 100644
+--- a/content/browser/media/media_canplaytype_browsertest.cc
++++ b/content/browser/media/media_canplaytype_browsertest.cc
+@@ -57,15 +57,7 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_webm) {
+ }
+ 
+ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_ogg) {
+-#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-  if (base::FeatureList::IsEnabled(media::kTheoraVideoCodec)) {
+-    ExecuteTest("testOggVariants(true)");  // has_theora_support=true
+-  } else {
+-    ExecuteTest("testOggVariants(false)");  // has_theora_support=false
+-  }
+-#else
+   ExecuteTest("testOggVariants(false)");  // has_theora_support=false
+-#endif
+ }
+ 
+ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_flac) {
+diff --git a/content/browser/media/media_color_browsertest.cc b/content/browser/media/media_color_browsertest.cc
+index bf44d7a6117d3..d9b7e11772176 100644
+--- a/content/browser/media/media_color_browsertest.cc
++++ b/content/browser/media/media_color_browsertest.cc
+@@ -37,32 +37,6 @@ class MediaColorTest : public MediaBrowserTest {
+   }
+ };
+ 
+-#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv420pTheora) {
+-  if (base::FeatureList::IsEnabled(media::kTheoraVideoCodec)) {
+-    RunColorTest("yuv420p.ogv");
+-  } else {
+-    GTEST_SKIP() << "Theora isn't supported";
+-  }
+-}
+-
+-IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv422pTheora) {
+-  if (base::FeatureList::IsEnabled(media::kTheoraVideoCodec)) {
+-    RunColorTest("yuv422p.ogv");
+-  } else {
+-    GTEST_SKIP() << "Theora isn't supported";
+-  }
+-}
+-
+-IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv444pTheora) {
+-  if (base::FeatureList::IsEnabled(media::kTheoraVideoCodec)) {
+-    RunColorTest("yuv444p.ogv");
+-  } else {
+-    GTEST_SKIP() << "Theora isn't supported";
+-  }
+-}
+-#endif  // !BUILDFLAG(IS_ANDROID)
+-
+ IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv420pVp8) {
+   RunColorTest("yuv420p.webm");
+ }
+diff --git a/content/renderer/pepper/video_decoder_shim.cc b/content/renderer/pepper/video_decoder_shim.cc
+index 49b62f41bc9a9..0f0353a95f2bb 100644
+--- a/content/renderer/pepper/video_decoder_shim.cc
++++ b/content/renderer/pepper/video_decoder_shim.cc
+@@ -53,9 +53,7 @@ constexpr gfx::Size kDefaultSize(128, 128);
+ 
+ bool IsSoftwareCodecSupported(media::VideoCodec codec) {
+ #if BUILDFLAG(ENABLE_LIBVPX)
+-  if (codec == media::VideoCodec::kVP9 ||
+-      (codec == media::VideoCodec::kVP8 &&
+-       !base::FeatureList::IsEnabled(media::kFFmpegDecodeOpaqueVP8))) {
++  if (codec == media::VideoCodec::kVP9 || codec == media::VideoCodec::kVP8) {
+     return true;
+   }
+ #endif
+@@ -189,8 +187,7 @@ void VideoDecoderShim::DecoderImpl::InitializeSoftwareDecoder(
+ #if BUILDFLAG(ENABLE_LIBVPX) || BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+ #if BUILDFLAG(ENABLE_LIBVPX)
+   if (config.codec() == media::VideoCodec::kVP9 ||
+-      (config.codec() == media::VideoCodec::kVP8 &&
+-       !base::FeatureList::IsEnabled(media::kFFmpegDecodeOpaqueVP8))) {
++      config.codec() == media::VideoCodec::kVP8) {
+     decoder_ = std::make_unique<media::VpxVideoDecoder>();
+   } else
+ #endif  // BUILDFLAG(ENABLE_LIBVPX)
+diff --git a/media/base/media_switches.cc b/media/base/media_switches.cc
+index 86649e91e17ac..f49d5038e4e1e 100644
+--- a/media/base/media_switches.cc
++++ b/media/base/media_switches.cc
+@@ -302,11 +302,6 @@ const base::FeatureParam<base::TimeDelta>
+         &kAudioRendererAlgorithmParameters, "starting_capacity_for_encrypted",
+         base::Milliseconds(500)};
+ 
+-// Prefer FFmpeg to LibVPX for Vp8 decoding with opaque alpha mode.
+-BASE_FEATURE(kFFmpegDecodeOpaqueVP8,
+-             "FFmpegDecodeOpaqueVP8",
+-             base::FEATURE_DISABLED_BY_DEFAULT);
+-
+ // Only used for disabling overlay fullscreen (aka SurfaceView) in Clank.
+ BASE_FEATURE(kOverlayFullscreenVideo,
+              "overlay-fullscreen-video",
+@@ -1757,20 +1752,13 @@ BASE_FEATURE(kLibaomUseChromeThreads,
+              "LibaomUseChromeThreads",
+              base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+-#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-// Allows decoding of theora / vp3 content.
+-BASE_FEATURE(kTheoraVideoCodec,
+-             "TheoraVideoCodec",
+-             base::FEATURE_DISABLED_BY_DEFAULT);
+-
+-#if BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) && BUILDFLAG(IS_CHROMEOS)
+ // Allows demuxing of AVI and decoding of MPEG4 streams. These should not be
+ // allowed through the web in Chrome, but may be enabled by the local file app.
+ BASE_FEATURE(kCrOSLegacyMediaFormats,
+              "CrOSLegacyMediaFormats",
+              base::FEATURE_DISABLED_BY_DEFAULT);
+ #endif
+-#endif
+ 
+ #if BUILDFLAG(IS_WIN)
+ // Controls whether to use D3D12 video decoder instead of D3D11 when supported.
+diff --git a/media/base/media_switches.h b/media/base/media_switches.h
+index 4dafe3e663583..c24071fbfa18c 100644
+--- a/media/base/media_switches.h
++++ b/media/base/media_switches.h
+@@ -228,7 +228,6 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kDocumentPictureInPictureCapture);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kEnableTabMuting);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kExposeSwDecodersToWebRTC);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kExternalClearKeyForTesting);
+-MEDIA_EXPORT BASE_DECLARE_FEATURE(kFFmpegDecodeOpaqueVP8);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kFailUrlProvisionFetcherForTesting);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kFallbackAfterDecodeError);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kGlobalMediaControls);
+@@ -508,13 +507,9 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaLogToConsole);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kLibvpxUseChromeThreads);
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kLibaomUseChromeThreads);
+ 
+-#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-MEDIA_EXPORT BASE_DECLARE_FEATURE(kTheoraVideoCodec);
+-
+-#if BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) && BUILDFLAG(IS_CHROMEOS)
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kCrOSLegacyMediaFormats);
+ #endif
+-#endif
+ 
+ #if BUILDFLAG(IS_WIN)
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kD3D12VideoDecoder);
+diff --git a/media/base/mime_util_internal.cc b/media/base/mime_util_internal.cc
+index 8be5dc6cb34ba..5d3ab5d59cdb9 100644
+--- a/media/base/mime_util_internal.cc
++++ b/media/base/mime_util_internal.cc
+@@ -309,12 +309,6 @@ void MimeUtil::AddSupportedMediaFormats() {
+   const CodecSet ogg_audio_codecs{FLAC, OPUS, VORBIS};
+ 
+   CodecSet ogg_video_codecs{VP8};
+-#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-  if (base::FeatureList::IsEnabled(kTheoraVideoCodec)) {
+-    ogg_video_codecs.emplace(THEORA);
+-  }
+-#endif  // BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-
+   CodecSet ogg_codecs(ogg_audio_codecs);
+   ogg_codecs.insert(ogg_video_codecs.begin(), ogg_video_codecs.end());
+ 
+diff --git a/media/base/supported_types.cc b/media/base/supported_types.cc
+index 1c8698e78b3a7..58801ea7a994e 100644
+--- a/media/base/supported_types.cc
++++ b/media/base/supported_types.cc
+@@ -427,21 +427,16 @@ bool IsDefaultSupportedAudioType(const AudioType& type) {
+ }
+ 
+ bool IsBuiltInVideoCodec(VideoCodec codec) {
+-#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+-  if (codec == VideoCodec::kTheora)
+-    return base::FeatureList::IsEnabled(kTheoraVideoCodec);
+-  if (codec == VideoCodec::kVP8 &&
+-      base::FeatureList::IsEnabled(kFFmpegDecodeOpaqueVP8)) {
++#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) && BUILDFLAG(USE_PROPRIETARY_CODECS)
++  if (codec == VideoCodec::kH264) {
+     return true;
+   }
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+-  if (codec == VideoCodec::kH264)
+-    return true;
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+-#endif  // BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
++#endif  // BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) &&
++        // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_LIBVPX)
+-  if (codec == VideoCodec::kVP8 || codec == VideoCodec::kVP9)
++  if (codec == VideoCodec::kVP8 || codec == VideoCodec::kVP9) {
+     return true;
++  }
+ #endif  // BUILDFLAG(ENABLE_LIBVPX)
+ #if BUILDFLAG(ENABLE_AV1_DECODER)
+   if (codec == VideoCodec::kAV1)
+diff --git a/media/filters/ffmpeg_glue.cc b/media/filters/ffmpeg_glue.cc
+index af52aeb5173af..140d90aba760e 100644
+--- a/media/filters/ffmpeg_glue.cc
++++ b/media/filters/ffmpeg_glue.cc
+@@ -158,12 +158,6 @@ const char* FFmpegGlue::GetAllowedVideoDecoders() {
+   // This should match the configured lists in //third_party/ffmpeg.
+ #if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+     std::vector<std::string> allowed_decoders;
+-    if (base::FeatureList::IsEnabled(kTheoraVideoCodec)) {
+-      allowed_decoders.push_back("theora");
+-    }
+-    if (base::FeatureList::IsEnabled(kFFmpegDecodeOpaqueVP8)) {
+-      allowed_decoders.push_back("vp8");
+-    }
+ #if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     allowed_decoders.push_back("h264");
+ #if BUILDFLAG(IS_CHROMEOS)
+diff --git a/media/filters/ffmpeg_video_decoder.cc b/media/filters/ffmpeg_video_decoder.cc
+index aaab17bdc3b9c..bd75477feeabb 100644
+--- a/media/filters/ffmpeg_video_decoder.cc
++++ b/media/filters/ffmpeg_video_decoder.cc
+@@ -123,14 +123,6 @@ static void ReleaseVideoBufferImpl(void* opaque, uint8_t* data) {
+ 
+ // static
+ bool FFmpegVideoDecoder::IsCodecSupported(VideoCodec codec) {
+-  if (codec == VideoCodec::kTheora &&
+-      !base::FeatureList::IsEnabled(kTheoraVideoCodec)) {
+-    return false;
+-  }
+-  if (codec == VideoCodec::kVP8 &&
+-      !base::FeatureList::IsEnabled(kFFmpegDecodeOpaqueVP8)) {
+-    return false;
+-  }
+ #if BUILDFLAG(IS_CHROMEOS)
+   if (codec == VideoCodec::kMPEG4 &&
+       !base::FeatureList::IsEnabled(kCrOSLegacyMediaFormats)) {
+diff --git a/media/gpu/test/video_encoder/bitstream_validator.cc b/media/gpu/test/video_encoder/bitstream_validator.cc
+index 858f477f52dbc..df61afd3f1ca7 100644
+--- a/media/gpu/test/video_encoder/bitstream_validator.cc
++++ b/media/gpu/test/video_encoder/bitstream_validator.cc
+@@ -46,7 +46,6 @@ std::unique_ptr<VideoDecoder> CreateDecoder(
+ 
+   if (codec == VideoCodec::kVP8 || codec == VideoCodec::kVP9) {
+ #if BUILDFLAG(ENABLE_LIBVPX)
+-    LOG_ASSERT(!base::FeatureList::IsEnabled(kFFmpegDecodeOpaqueVP8));
+     decoder = std::make_unique<VpxVideoDecoder>();
+ #endif
+   }
+diff --git a/media/gpu/test/video_encoder/video_encoder_test_environment.cc b/media/gpu/test/video_encoder/video_encoder_test_environment.cc
+index c4527a45fb92b..443be28cfcb1f 100644
+--- a/media/gpu/test/video_encoder/video_encoder_test_environment.cc
++++ b/media/gpu/test/video_encoder/video_encoder_test_environment.cc
+@@ -280,7 +280,6 @@ VideoEncoderTestEnvironment* VideoEncoderTestEnvironment::Create(
+       enabled_features);
+   std::vector<base::test::FeatureRef> combined_disabled_features(
+       disabled_features);
+-  combined_disabled_features.push_back(media::kFFmpegDecodeOpaqueVP8);
+ #if BUILDFLAG(USE_VAAPI)
+   // TODO(crbug.com/41380519): remove once enabled by default.
+   combined_enabled_features.push_back(media::kVaapiLowPowerEncoderGen9x);
+-- 
+2.43.0
+
